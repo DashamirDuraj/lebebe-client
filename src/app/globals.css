@@ -1,26 +1,219 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  /* Brand colors */
+  --primary-500: #7cc4e8;
+  --primary-700: #2f8cb7;
+  --primary-100: #e6f4fb;
+  --accent-500: #f7b6c7;
+  --accent-700: #df6b87;
+
+  /* Neutrals */
+  --neutral-900: #1f2937;
+  --neutral-700: #374151;
+  --neutral-500: #6b7280;
+  --neutral-300: #d1d5db;
+  --neutral-100: #f3f4f6;
+
+  /* Status */
+  --success: #16a34a;
+  --warning: #d97706;
+  --error: #dc2626;
+
+  /* Section accents */
+  --girl-accent: #fbd3e9;
+  --boy-accent: #a3d9f5;
+  --unisex-accent: #b8e9d2;
+  --lavender-accent: #e6e0fa;
+
+  --radius: 0.75rem;
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --color-background: #ffffff;
+  --color-foreground: #0f172a;
+  --color-muted: #f3f4f6;
+  --color-muted-foreground: #6b7280;
+  --color-accent: #e6f4fb;
+  --color-accent-foreground: #0f172a;
+  --color-primary: var(--primary-500);
+  --color-primary-foreground: #ffffff;
+  --color-secondary: #fbd3e9;
+  --color-secondary-foreground: #1f2937;
+  --color-destructive: var(--error);
+  --color-destructive-foreground: #ffffff;
+  --color-border: #e5e7eb;
+  --color-input: #e5e7eb;
+  --color-ring: var(--primary-500);
+  --color-card: #ffffff;
+  --color-card-foreground: #0f172a;
+  --font-sans: var(--font-inter), system-ui, -apple-system, "Segoe UI",
+    sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono",
+    "Courier New", monospace;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-family: var(--font-inter), system-ui, -apple-system, "Segoe UI",
+      sans-serif;
+    font-weight: 400;
+    line-height: 1.6;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    font-family: var(--font-poppins), var(--font-inter), sans-serif;
+    font-weight: 700;
+    line-height: 1.2;
+  }
+
+  h1 {
+    font-size: 3rem;
+    line-height: 1.2;
+  }
+
+  h2 {
+    font-size: 2rem;
+    line-height: 1.25;
+  }
+
+  h3 {
+    font-size: 1.75rem;
+    font-weight: 600;
+    line-height: 1.3;
+  }
+
+  h4 {
+    font-size: 1.5rem;
+    font-weight: 600;
   }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+/* Soft shadows */
+.shadow-subtle {
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+
+.shadow-elevated {
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
+}
+
+.shadow-sticky {
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+}
+
+/* Primary button shadow */
+.shadow-primary {
+  box-shadow: 0 8px 24px rgba(124, 196, 232, 0.45);
+}
+
+/* Animations */
+@keyframes float {
+  0%,
+  100% {
+    transform: translateY(0px) rotate(0deg);
+  }
+  50% {
+    transform: translateY(-15px) rotate(3deg);
+  }
+}
+
+@keyframes wiggle {
+  0%,
+  100% {
+    transform: rotate(-2deg);
+  }
+  50% {
+    transform: rotate(2deg);
+  }
+}
+
+@keyframes bounce-soft {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-8px);
+  }
+}
+
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-float {
+  animation: float 6s ease-in-out infinite;
+}
+
+.animate-wiggle {
+  animation: wiggle 1.2s ease-in-out infinite;
+}
+
+.animate-bounce-soft {
+  animation: bounce-soft 2.5s ease-in-out infinite;
+}
+
+.animate-fadeInUp {
+  animation: fadeInUp 0.6s ease-out;
+}
+
+/* Blob backgrounds */
+.blob-pink {
+  background: var(--girl-accent);
+  opacity: 0.08;
+}
+
+.blob-blue {
+  background: var(--boy-accent);
+  opacity: 0.08;
+}
+
+.blob-mint {
+  background: var(--unisex-accent);
+  opacity: 0.08;
+}
+
+/* Section colors */
+.section-girl {
+  --section-color: var(--girl-accent);
+  --section-hover: #f9c1dd;
+}
+
+.section-boy {
+  --section-color: var(--boy-accent);
+  --section-hover: #8dcfef;
+}
+
+.section-unisex {
+  --section-color: var(--unisex-accent);
+  --section-hover: #a3dfc3;
+}
+
+/* Reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
