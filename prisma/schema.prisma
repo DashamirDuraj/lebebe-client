@@ -1,0 +1,264 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// ============================
+// CATEGORIES & CATALOG
+// ============================
+
+model Category {
+  id        String  @id @default(cuid())
+  name      String
+  slug      String  @unique
+  isActive  Boolean @default(true)
+  sortOrder Int     @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  products Product[]
+}
+
+model Product {
+  id          String  @id @default(cuid())
+  name        String
+  slug        String  @unique
+  type        String // e.g. "tshirt", "dress", "set"
+  description String?
+
+  // Optional age range in months (e.g. 0–36)
+  ageFromMonths Int?
+  ageToMonths   Int?
+
+  isActive Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  categoryId String?
+  category   Category? @relation(fields: [categoryId], references: [id])
+
+  variants   ProductVariant[]
+  media      ProductMedia[]
+  orderItems OrderItem[]
+}
+
+model ProductVariant {
+  id        String  @id @default(cuid())
+  productId String
+  product   Product @relation(fields: [productId], references: [id])
+
+  size  String // e.g. "0-3", "3-6", "6-9"
+  color String // e.g. "red", "blue"
+
+  sku String? @unique
+
+  // Prices
+  wholesalePrice Decimal @db.Decimal(10, 2)
+  retailPrice    Decimal @db.Decimal(10, 2)
+
+  // Current stock in store
+  stock Int @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  inventoryMovements InventoryMovement[]
+  orderItems         OrderItem[]
+
+  @@unique([productId, size, color])
+}
+
+model ProductMedia {
+  id        String  @id @default(cuid())
+  productId String
+  product   Product @relation(fields: [productId], references: [id])
+
+  url      String
+  type     MediaType @default(IMAGE) // IMAGE / VIDEO
+  position Int       @default(0)
+  altText  String?
+
+  createdAt DateTime @default(now())
+}
+
+enum MediaType {
+  IMAGE
+  VIDEO
+}
+
+// ============================
+// INVENTORY MOVEMENTS
+// ============================
+
+model InventoryMovement {
+  id        String         @id @default(cuid())
+  variantId String
+  variant   ProductVariant @relation(fields: [variantId], references: [id])
+
+  movementType InventoryMovementType
+  quantity     Int // positive for ADD, negative for REMOVE/ADJUST
+
+  // Cost per unit for this movement (for ADD). Null for e.g. REMOVE/ADJUST without cost.
+  unitCost Decimal? @db.Decimal(10, 2)
+  currency String?  @default("EUR")
+
+  note String?
+
+  // Optional link to order if movement was caused by a sale
+  orderId String?
+  order   Order?  @relation(fields: [orderId], references: [id])
+
+  createdAt DateTime @default(now())
+}
+
+enum InventoryMovementType {
+  ADD // stock added (new shipment)
+  REMOVE // stock removed (damaged, lost, etc.)
+  ADJUST // generic manual adjustment
+}
+
+// ============================
+// CUSTOMERS
+// ============================
+
+model Customer {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  firstName String?
+  lastName  String?
+  phone     String?
+  createdAt DateTime @default(now())
+
+  orders Order[]
+}
+
+// ============================
+// ORDERS & ORDER ITEMS
+// ============================
+
+model Order {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Link to Customer (optional, but useful for grouping by email)
+  customerId String?
+  customer   Customer? @relation(fields: [customerId], references: [id])
+
+  // Snapshot fields (for that specific order)
+  firstName String
+  lastName  String
+  email     String?
+  phone     String
+
+  address    String
+  city       String
+  postalCode String?
+  notes      String?
+
+  status         OrderStatus    @default(PENDING_OTP)
+  deliveryStatus DeliveryStatus @default(PENDING)
+
+  // OTP
+  otpHash      String?
+  otpExpiresAt DateTime?
+  otpAttempts  Int       @default(0)
+
+  // Payment info
+  paymentType PaymentType @default(CASH_ON_DELIVERY)
+
+  // Totals at time of order
+  totalAmount Decimal @db.Decimal(10, 2)
+  currency    String  @default("EUR")
+
+  // Where the order came from
+  source OrderSource @default(WEBSITE)
+
+  items              OrderItem[]
+  inventoryMovements InventoryMovement[]
+}
+
+model OrderItem {
+  id      String @id @default(cuid())
+  orderId String
+  order   Order  @relation(fields: [orderId], references: [id])
+
+  productId String
+  product   Product @relation(fields: [productId], references: [id])
+
+  variantId String?
+  variant   ProductVariant? @relation(fields: [variantId], references: [id])
+
+  quantity Int
+
+  // Freeze price at time of purchase
+  unitPrice Decimal @db.Decimal(10, 2)
+  currency  String  @default("EUR")
+}
+
+enum OrderStatus {
+  PENDING_OTP
+  CONFIRMED
+  CANCELLED
+}
+
+enum DeliveryStatus {
+  PENDING
+  IN_DELIVERY
+  DELIVERED
+  FAILED
+}
+
+enum PaymentType {
+  CASH_ON_DELIVERY
+  ONLINE
+}
+
+enum OrderSource {
+  WEBSITE
+  INSTAGRAM
+  OTHER
+}
+
+// ============================
+// ADMIN USERS
+// ============================
+
+model AdminUser {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String // store a hash, not plain text
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+}
+
+// ============================
+// SHOP EXPENSES
+// ============================
+
+model ShopExpense {
+  id          String          @id @default(cuid())
+  category    ExpenseCategory
+  description String?
+  amount      Decimal         @db.Decimal(10, 2)
+  currency    String          @default("EUR")
+
+  quantity Int? // e.g. 500 bags, 100 cards
+  unit     String? // "bags", "cards", "flyers"
+
+  date      DateTime @default(now())
+  createdAt DateTime @default(now())
+}
+
+enum ExpenseCategory {
+  INVENTORY // extra inventory cost not tied to specific variant
+  ADS // Instagram ads, etc.
+  PACKAGING // bags, boxes, visit cards
+  OTHER
+}
