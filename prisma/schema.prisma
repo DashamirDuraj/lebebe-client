@@ -25,15 +25,23 @@ model Category {
 }
 
 model Product {
-  id          String  @id @default(cuid())
-  name        String
-  slug        String  @unique
-  type        String // e.g. "tshirt", "dress", "set"
-  description String?
+  id               String  @id @default(cuid())
+  name             String
+  slug             String  @unique
+  type             String // e.g. "tshirt", "dress", "set"
+  gender           Gender  @default(UNISEX)
+  description      String?
+  shortDescription String?
 
   // Optional age range in months (e.g. 0–36)
   ageFromMonths Int?
   ageToMonths   Int?
+
+  // Badges / merchandising
+  isNew        Boolean @default(false)
+  isBestSeller Boolean @default(false)
+  isOnSale     Boolean @default(false)
+  salePercent  Int?
 
   isActive Boolean @default(true)
 
@@ -90,6 +98,13 @@ model ProductMedia {
 enum MediaType {
   IMAGE
   VIDEO
+}
+
+enum Gender {
+  GIRL
+  BOY
+  NEWBORN
+  UNISEX
 }
 
 // ============================

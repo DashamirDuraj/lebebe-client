@@ -7,6 +7,8 @@ export interface Product {
   gender: "girl" | "boy" | "newborn" | "unisex";
   sizes: string[];
   description: string;
+  badges?: string[];
+  salePercent?: number | null;
 }
 
 export interface CartItem {

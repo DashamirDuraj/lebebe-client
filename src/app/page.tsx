@@ -1,10 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Header } from "@/components/Header";
 import { ProductModal } from "@/components/ProductModal";
 import { CartSidebar } from "@/components/CartSidebar";
-import { products } from "@/data/products";
 import { Product, CartItem } from "@/types/product";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { HeroSection } from "@/components/sections/HeroSection";
@@ -21,6 +20,52 @@ export default function HomePage() {
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [cartItems, setCartItems] = useState<CartItem[]>([]);
   const [genderFilter, setGenderFilter] = useState<"all" | "girl" | "boy" | "newborn">("all");
+  const [newArrivals, setNewArrivals] = useState<Product[]>([]);
+  const [bestSellers, setBestSellers] = useState<Product[]>([]);
+
+  const mapApiProductToUi = (p: any): Product => {
+    const sizes =
+      p.variants?.map((v: any) => v.size).filter(Boolean) ??
+      ["0-3M", "3-6M", "6-12M", "12-18M"];
+    const gender = (p.gender || "unisex").toString().toLowerCase();
+
+    return {
+      id: p.id,
+      name: p.name,
+      price: Number(p.retailPrice ?? 0),
+      image: p.mainImage?.url ?? p.media?.[0]?.url ?? "/placeholder.png",
+      category: p.type ?? "General",
+      gender: (gender === "girl" || gender === "boy" || gender === "newborn" || gender === "unisex"
+        ? gender
+        : "unisex") as Product["gender"],
+      sizes,
+      description: p.shortDescription ?? p.description ?? "",
+      badges: p.badges ?? [],
+      salePercent: p.salePercent ?? null,
+    };
+  };
+
+  const fetchProducts = async (gender: "all" | "girl" | "boy" | "newborn") => {
+    const genderParam =
+      gender !== "all" ? `&gender=${gender.toUpperCase()}` : "";
+
+    try {
+      const res = await fetch(`/api/products?tag=new&tag=best-seller&pageSize=16${genderParam}`);
+      const json = await res.json();
+      const items: Product[] = (json.items || []).map(mapApiProductToUi);
+
+      setNewArrivals(items.filter((item) => item.badges?.includes("new")).slice(0, 4));
+      setBestSellers(items.filter((item) => item.badges?.includes("bestSeller")).slice(0, 4));
+    } catch (error) {
+      console.error("Failed to load products", error);
+    }
+  };
+
+  // Load data on first paint
+  useEffect(() => {
+    fetchProducts(genderFilter);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [genderFilter]);
 
   const handleProductClick = (product: Product) => {
     setSelectedProduct(product);
@@ -68,10 +113,15 @@ export default function HomePage() {
 
   const totalCartItems = cartItems.reduce((sum, item) => sum + item.quantity, 0);
 
-  const filteredProducts =
+  const filteredNewArrivals =
     genderFilter === "all"
-      ? products
-      : products.filter((p) => p.gender === genderFilter || p.gender === "unisex");
+      ? newArrivals
+      : newArrivals.filter((p) => p.gender === genderFilter || p.gender === "unisex");
+
+  const filteredBestSellers =
+    genderFilter === "all"
+      ? bestSellers
+      : bestSellers.filter((p) => p.gender === genderFilter || p.gender === "unisex");
 
   const getFilterLabel = () => {
     switch (genderFilter) {
@@ -121,7 +171,7 @@ export default function HomePage() {
       <CategoryGrid onFilterChange={handleFilterChange} />
 
       <NewArrivalsSection
-        products={filteredProducts}
+        products={filteredNewArrivals}
         genderFilter={genderFilter}
         filterLabel={filterLabel}
         onClearFilter={() => setGenderFilter("all")}
@@ -129,7 +179,7 @@ export default function HomePage() {
         onViewAll={() => setGenderFilter("all")}
       />
 
-      <BestSellersSection products={filteredProducts} onProductClick={handleProductClick} />
+      <BestSellersSection products={filteredBestSellers} onProductClick={handleProductClick} />
 
       <TrustBandSection />
 
