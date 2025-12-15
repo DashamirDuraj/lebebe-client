@@ -37,11 +37,19 @@ import {
 type ProductRow = {
   id: string;
   name: string;
+  slug?: string;
   type?: string;
   sizes: string;
   availableQty: number;
   expectedRevenue: number;
   inventoryCost: number;
+  createdAt?: string;
+  updatedAt?: string;
+  isNew?: boolean;
+  isBestSeller?: boolean;
+  isOnSale?: boolean;
+  salePercent?: number | null;
+  isActive?: boolean;
 };
 
 type OrderRow = {
@@ -108,6 +116,7 @@ export default function AdminDashboardPage() {
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isTypeModalOpen, setIsTypeModalOpen] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [productForm, setProductForm] = useState({
     name: "",
     slug: "",
@@ -183,7 +192,62 @@ export default function AdminDashboardPage() {
   );
 
   const productColumns: GridColDef<ProductRow>[] = [
-    { field: "id", headerName: "ID", flex: 1, minWidth: 120 },
+    {
+      field: "id",
+      headerName: "",
+      renderCell: ({ row }) => (
+        <Button
+          size="small"
+          variant="text"
+          onClick={() => {
+            (async () => {
+              if (!row.id) return;
+              setEditingId(row.id);
+              try {
+                const res = await fetch(`/api/admin/products/${row.id}`);
+                const json = await res.json();
+                if (!res.ok) {
+                  console.error("Failed to load product detail", json?.message);
+                  return;
+                }
+                if (json.product) {
+                  const p = json.product;
+                  const matchedTypeId =
+                    p.productTypeId ||
+                    productTypes.find((t) => t.name === p.type || t.id === p.productTypeId)?.id ||
+                    "";
+                  setProductForm({
+                    name: p.name ?? "",
+                    slug: p.slug ?? "",
+                    type: p.type ?? productTypes.find((t) => t.id === matchedTypeId)?.name ?? "",
+                    productTypeId: matchedTypeId,
+                    gender: p.gender ?? "UNISEX",
+                    retailPrice: p.retailPrice ?? 0,
+                    wholesalePrice: p.wholesalePrice ?? 0,
+                    stock: p.stock ?? 0,
+                    ageFromMonths: p.ageFromMonths ?? 0,
+                    ageToMonths: p.ageToMonths ?? 0,
+                    color: p.color ?? "Multicolor",
+                    isNew: !!p.isNew,
+                    isBestSeller: !!p.isBestSeller,
+                    isOnSale: !!p.isOnSale,
+                    salePercent: p.salePercent ?? 0,
+                    isActive: p.isActive ?? true,
+                  });
+                  setIsAddOpen(true);
+                }
+              } catch (e) {
+                console.error("Failed to load product detail", e);
+              }
+            })();
+          }}
+        >
+          Edit
+        </Button>
+      ),
+      sortable: false,
+      width: 90,
+    },
     { field: "name", headerName: "Name", flex: 1.4, minWidth: 180 },
     { field: "type", headerName: "Type", flex: 0.9, minWidth: 120 },
     { field: "sizes", headerName: "Sizes", flex: 1, minWidth: 160 },
@@ -207,6 +271,22 @@ export default function AdminDashboardPage() {
       flex: 1,
       minWidth: 160,
       valueFormatter: ({ value }) => currency(value as number),
+    },
+    {
+      field: "createdAt",
+      headerName: "Created",
+      flex: 0.9,
+      minWidth: 140,
+      valueFormatter: ({ value }) =>
+        value ? new Date(value as string).toLocaleDateString("en-GB") : "",
+    },
+    {
+      field: "updatedAt",
+      headerName: "Updated",
+      flex: 0.9,
+      minWidth: 140,
+      valueFormatter: ({ value }) =>
+        value ? new Date(value as string).toLocaleDateString("en-GB") : "",
     },
   ];
 
@@ -256,24 +336,6 @@ export default function AdminDashboardPage() {
         <Typography variant="h4" fontWeight={700}>
           Admin Dashboard
         </Typography>
-        <Stack direction="row" spacing={1}>
-          <Button
-            variant="contained"
-            size="small"
-            startIcon={<AddIcon />}
-            onClick={() => setIsAddOpen(true)}
-          >
-            Add Product
-          </Button>
-          <Button
-            variant="outlined"
-            size="small"
-            startIcon={<CategoryIcon />}
-            onClick={() => setIsTypeModalOpen(true)}
-          >
-            Manage Types
-          </Button>
-        </Stack>
       </Stack>
 
       <Grid container spacing={2} mb={2}>
@@ -323,6 +385,45 @@ export default function AdminDashboardPage() {
             <Typography variant="h6" fontWeight={700}>
               Products (inventory & revenue)
             </Typography>
+            <Stack direction="row" spacing={1}>
+              <Button
+                variant="contained"
+                size="small"
+                startIcon={<AddIcon />}
+                onClick={() => {
+                  setEditingId(null);
+                  setProductForm({
+                    name: "",
+                    slug: "",
+                    type: "",
+                    productTypeId: "",
+                    gender: "UNISEX",
+                    retailPrice: 0,
+                    wholesalePrice: 0,
+                    stock: 0,
+                    ageFromMonths: 0,
+                    ageToMonths: 0,
+                    color: "Multicolor",
+                    isNew: false,
+                    isBestSeller: false,
+                    isOnSale: false,
+                    salePercent: 0,
+                    isActive: true,
+                  });
+                  setIsAddOpen(true);
+                }}
+              >
+                Add Product
+              </Button>
+              <Button
+                variant="outlined"
+                size="small"
+                startIcon={<CategoryIcon />}
+                onClick={() => setIsTypeModalOpen(true)}
+              >
+                Manage Types
+              </Button>
+            </Stack>
           </Stack>
           <div style={{ width: "100%", height: 360 }}>
             <DataGrid
@@ -427,7 +528,7 @@ export default function AdminDashboardPage() {
       </Card>
 
       <Dialog open={isAddOpen} onClose={() => setIsAddOpen(false)} fullWidth maxWidth="sm">
-        <DialogTitle>Add Product</DialogTitle>
+        <DialogTitle>{editingId ? "Update Product" : "Add Product"}</DialogTitle>
         <DialogContent>
           <Stack spacing={2} mt={1}>
             <TextField
@@ -598,33 +699,43 @@ export default function AdminDashboardPage() {
             variant="contained"
             onClick={async () => {
               setIsSaving(true);
+              const payload = {
+                name: productForm.name,
+                slug: productForm.slug,
+                type: productForm.type,
+                productTypeId: productForm.productTypeId || null,
+                gender: productForm.gender,
+                ageFromMonths: productForm.ageFromMonths,
+                ageToMonths: productForm.ageToMonths,
+                isNew: productForm.isNew,
+                isBestSeller: productForm.isBestSeller,
+                isOnSale: productForm.isOnSale,
+                salePercent: productForm.salePercent,
+                isActive: productForm.isActive,
+                variant: {
+                  retailPrice: productForm.retailPrice,
+                  wholesalePrice: productForm.wholesalePrice,
+                  stock: productForm.stock,
+                  size: `${productForm.ageFromMonths}-${productForm.ageToMonths}M`,
+                  color: productForm.color,
+                },
+              };
               try {
-                await fetch("/api/admin/products", {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({
-                    name: productForm.name,
-                    slug: productForm.slug,
-                    type: productForm.type,
-                    productTypeId: productForm.productTypeId || null,
-                    gender: productForm.gender,
-                    ageFromMonths: productForm.ageFromMonths,
-                    ageToMonths: productForm.ageToMonths,
-                    isNew: productForm.isNew,
-                    isBestSeller: productForm.isBestSeller,
-                    isOnSale: productForm.isOnSale,
-                    salePercent: productForm.salePercent,
-                    isActive: productForm.isActive,
-                    variant: {
-                      retailPrice: productForm.retailPrice,
-                      wholesalePrice: productForm.wholesalePrice,
-                      stock: productForm.stock,
-                      size: `${productForm.ageFromMonths}-${productForm.ageToMonths}M`,
-                      color: productForm.color,
-                    },
-                  }),
-                });
+                if (editingId) {
+                  await fetch(`/api/admin/products/${editingId}`, {
+                    method: "PATCH",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(payload),
+                  });
+                } else {
+                  await fetch("/api/admin/products", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(payload),
+                  });
+                }
                 setIsAddOpen(false);
+                setEditingId(null);
                 setProductForm({
                   name: "",
                   slug: "",
@@ -643,19 +754,18 @@ export default function AdminDashboardPage() {
                   salePercent: 0,
                   isActive: true,
                 });
-                // Refresh tables
                 const productsRes = await fetch("/api/admin/products");
                 const productsJson = await productsRes.json();
                 setProductRows(productsJson.items ?? []);
               } catch (e) {
-                console.error("Failed to create product", e);
+                console.error("Failed to save product", e);
               } finally {
                 setIsSaving(false);
               }
             }}
             disabled={isSaving}
           >
-            {isSaving ? "Creating..." : "Create"}
+            {isSaving ? "Saving..." : editingId ? "Update" : "Create"}
           </Button>
         </DialogActions>
       </Dialog>

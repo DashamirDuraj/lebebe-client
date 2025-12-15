@@ -59,6 +59,7 @@ export async function getAdminProductsTable() {
       variants: true,
       productType: true,
     },
+    orderBy: { createdAt: "desc" },
   });
 
   return products.map((product) => {
@@ -75,11 +76,19 @@ export async function getAdminProductsTable() {
     return {
       id: product.id,
       name: product.name,
+      slug: product.slug,
       type: product.productType?.name || product.type,
       sizes: product.variants.map((v) => v.size).join(", "),
       availableQty: totalQty,
       expectedRevenue,
       inventoryCost,
+      createdAt: product.createdAt.toISOString(),
+      updatedAt: product.updatedAt.toISOString(),
+      isNew: product.isNew,
+      isBestSeller: product.isBestSeller,
+      isOnSale: product.isOnSale,
+      salePercent: product.salePercent,
+      isActive: product.isActive,
     };
   });
 }
@@ -238,4 +247,170 @@ export async function deleteAdminProductType(id: string) {
   return prisma.productType.delete({
     where: { id },
   });
+}
+
+export async function updateAdminProductBasics(
+  id: string,
+  data: {
+    name?: string;
+    slug?: string;
+    type?: string;
+    productTypeId?: string | null;
+    isNew?: boolean;
+    isBestSeller?: boolean;
+    isOnSale?: boolean;
+    salePercent?: number | null;
+    isActive?: boolean;
+    variant?: {
+      retailPrice?: number | null;
+      wholesalePrice?: number | null;
+      stock?: number | null;
+      size?: string | null;
+      color?: string | null;
+    };
+  },
+) {
+  let typeName = data.type;
+  if (!typeName && data.productTypeId) {
+    const productType = await prisma.productType.findUnique({
+      where: { id: data.productTypeId },
+      select: { name: true },
+    });
+    typeName = productType?.name || undefined;
+  }
+
+  const updated = await prisma.$transaction(async (tx) => {
+    const product = await tx.product.update({
+      where: { id },
+      data: {
+        name: data.name,
+        slug: data.slug,
+        type: typeName,
+        productTypeId: data.productTypeId ?? undefined,
+        isNew: data.isNew,
+        isBestSeller: data.isBestSeller,
+        isOnSale: data.isOnSale,
+        salePercent: data.salePercent ?? null,
+        isActive: data.isActive,
+      },
+    });
+
+    if (data.variant) {
+      const existingVariant = await tx.productVariant.findFirst({
+        where: { productId: id },
+        orderBy: { createdAt: "asc" },
+      });
+
+      if (existingVariant) {
+        await tx.productVariant.update({
+          where: { id: existingVariant.id },
+          data: {
+            retailPrice:
+              data.variant.retailPrice != null
+                ? new Prisma.Decimal(data.variant.retailPrice)
+                : undefined,
+            wholesalePrice:
+              data.variant.wholesalePrice != null
+                ? new Prisma.Decimal(data.variant.wholesalePrice)
+                : undefined,
+            stock: data.variant.stock ?? undefined,
+            size: data.variant.size ?? undefined,
+            color: data.variant.color ?? undefined,
+          },
+        });
+      } else {
+        await tx.productVariant.create({
+          data: {
+            productId: id,
+            size: data.variant.size ?? "One Size",
+            color: data.variant.color ?? "Multicolor",
+            retailPrice: new Prisma.Decimal(data.variant.retailPrice ?? 0),
+            wholesalePrice:
+              data.variant.wholesalePrice != null
+                ? new Prisma.Decimal(data.variant.wholesalePrice)
+                : null,
+            stock: data.variant.stock ?? 0,
+          },
+        });
+      }
+    }
+
+    return tx.product.findUnique({
+      where: { id: product.id },
+      include: {
+        variants: true,
+        productType: true,
+      },
+    });
+  });
+
+  if (!updated) {
+    throw new Error("Product not found after update");
+  }
+
+  const totalQty = updated.variants.reduce((sum, v) => sum + (v.stock ?? 0), 0);
+  const expectedRevenue = updated.variants.reduce(
+    (sum, v) => sum + toNumber(v.retailPrice) * (v.stock ?? 0),
+    0,
+  );
+  const inventoryCost = updated.variants.reduce(
+    (sum, v) => sum + toNumber(v.wholesalePrice) * (v.stock ?? 0),
+    0,
+  );
+
+  return {
+    id: updated.id,
+    name: updated.name,
+    type: updated.productType?.name || updated.type,
+    slug: updated.slug,
+    sizes: updated.variants.map((v) => v.size).join(", "),
+    availableQty: totalQty,
+    expectedRevenue,
+    inventoryCost,
+    createdAt: updated.createdAt.toISOString(),
+    updatedAt: updated.updatedAt.toISOString(),
+    isNew: updated.isNew,
+    isBestSeller: updated.isBestSeller,
+    isOnSale: updated.isOnSale,
+    salePercent: updated.salePercent,
+    isActive: updated.isActive,
+  };
+}
+
+export async function getAdminProductDetail(id: string) {
+  if (!id) return null;
+
+  const product = await prisma.product.findUnique({
+    where: { id },
+    include: {
+      productType: true,
+      variants: {
+        orderBy: { createdAt: "asc" },
+      },
+    },
+  });
+
+  if (!product) return null;
+
+  const variant = product.variants[0];
+
+  return {
+    id: product.id,
+    name: product.name,
+    slug: product.slug,
+    type: product.productType?.name || product.type,
+    productTypeId: product.productTypeId ?? "",
+    gender: product.gender,
+    retailPrice: variant ? toNumber(variant.retailPrice) : 0,
+    wholesalePrice: variant ? toNumber(variant.wholesalePrice) : 0,
+    stock: variant?.stock ?? 0,
+    ageFromMonths: product.ageFromMonths ?? 0,
+    ageToMonths: product.ageToMonths ?? 0,
+    color: variant?.color ?? "Multicolor",
+    isNew: product.isNew,
+    isBestSeller: product.isBestSeller,
+    isOnSale: product.isOnSale,
+    salePercent: product.salePercent ?? 0,
+    isActive: product.isActive,
+  };
 }
