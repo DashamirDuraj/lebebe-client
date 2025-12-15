@@ -1,5 +1,9 @@
 import { NextResponse } from "next/server";
-import { getAdminProductDetail, updateAdminProductBasics } from "@/lib/repositories/admin";
+import {
+  deleteAdminProduct,
+  getAdminProductDetail,
+  updateAdminProductBasics,
+} from "@/lib/repositories/admin";
 
 type Params = {
   params: Promise<{ id: string }>;
@@ -61,6 +65,23 @@ export async function PATCH(request: Request, { params }: Params) {
     console.error("Update product error", error);
     return NextResponse.json(
       { message: error?.message || "Unable to update product" },
+      { status: 400 },
+    );
+  }
+}
+
+export async function DELETE(_req: Request, { params }: Params) {
+  try {
+    const { id } = await params;
+    if (!id) {
+      return NextResponse.json({ message: "Missing product id" }, { status: 400 });
+    }
+    await deleteAdminProduct(id);
+    return NextResponse.json({ success: true });
+  } catch (error: any) {
+    console.error("Delete product error", error);
+    return NextResponse.json(
+      { message: error?.message || "Unable to delete product" },
       { status: 400 },
     );
   }

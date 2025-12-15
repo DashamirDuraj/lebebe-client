@@ -377,6 +377,30 @@ export async function updateAdminProductBasics(
   };
 }
 
+export async function deleteAdminProduct(id: string) {
+  if (!id) {
+    throw new Error("Missing product id");
+  }
+
+  return prisma.$transaction(async (tx) => {
+    const orderItems = await tx.orderItem.count({ where: { productId: id } });
+    if (orderItems > 0) {
+      throw new Error("Cannot delete a product that has existing orders");
+    }
+
+    await tx.inventoryMovement.deleteMany({
+      where: {
+        variant: { productId: id },
+      },
+    });
+    await tx.productMedia.deleteMany({ where: { productId: id } });
+    await tx.productVariant.deleteMany({ where: { productId: id } });
+    await tx.product.delete({ where: { id } });
+
+    return { success: true };
+  });
+}
+
 export async function getAdminProductDetail(id: string) {
   if (!id) return null;
 

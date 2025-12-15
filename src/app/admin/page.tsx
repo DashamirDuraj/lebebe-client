@@ -117,6 +117,7 @@ export default function AdminDashboardPage() {
   const [isSaving, setIsSaving] = useState(false);
   const [isTypeModalOpen, setIsTypeModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const [productForm, setProductForm] = useState({
     name: "",
     slug: "",
@@ -193,60 +194,93 @@ export default function AdminDashboardPage() {
 
   const productColumns: GridColDef<ProductRow>[] = [
     {
-      field: "id",
+      field: "actions",
       headerName: "",
       renderCell: ({ row }) => (
-        <Button
-          size="small"
-          variant="text"
-          onClick={() => {
-            (async () => {
-              if (!row.id) return;
-              setEditingId(row.id);
-              try {
-                const res = await fetch(`/api/admin/products/${row.id}`);
-                const json = await res.json();
-                if (!res.ok) {
-                  console.error("Failed to load product detail", json?.message);
-                  return;
+        <Stack direction="row" spacing={0.5}>
+          <Button
+            size="small"
+            variant="text"
+            onClick={() => {
+              (async () => {
+                if (!row.id) return;
+                setEditingId(row.id);
+                try {
+                  const res = await fetch(`/api/admin/products/${row.id}`);
+                  const json = await res.json();
+                  if (!res.ok) {
+                    console.error("Failed to load product detail", json?.message);
+                    return;
+                  }
+                  if (json.product) {
+                    const p = json.product;
+                    const matchedTypeId =
+                      p.productTypeId ||
+                      productTypes.find((t) => t.name === p.type || t.id === p.productTypeId)?.id ||
+                      "";
+                    setProductForm({
+                      name: p.name ?? "",
+                      slug: p.slug ?? "",
+                      type: p.type ?? productTypes.find((t) => t.id === matchedTypeId)?.name ?? "",
+                      productTypeId: matchedTypeId,
+                      gender: p.gender ?? "UNISEX",
+                      retailPrice: p.retailPrice ?? 0,
+                      wholesalePrice: p.wholesalePrice ?? 0,
+                      stock: p.stock ?? 0,
+                      ageFromMonths: p.ageFromMonths ?? 0,
+                      ageToMonths: p.ageToMonths ?? 0,
+                      color: p.color ?? "Multicolor",
+                      isNew: !!p.isNew,
+                      isBestSeller: !!p.isBestSeller,
+                      isOnSale: !!p.isOnSale,
+                      salePercent: p.salePercent ?? 0,
+                      isActive: p.isActive ?? true,
+                    });
+                    setIsAddOpen(true);
+                  }
+                } catch (e) {
+                  console.error("Failed to load product detail", e);
                 }
-                if (json.product) {
-                  const p = json.product;
-                  const matchedTypeId =
-                    p.productTypeId ||
-                    productTypes.find((t) => t.name === p.type || t.id === p.productTypeId)?.id ||
-                    "";
-                  setProductForm({
-                    name: p.name ?? "",
-                    slug: p.slug ?? "",
-                    type: p.type ?? productTypes.find((t) => t.id === matchedTypeId)?.name ?? "",
-                    productTypeId: matchedTypeId,
-                    gender: p.gender ?? "UNISEX",
-                    retailPrice: p.retailPrice ?? 0,
-                    wholesalePrice: p.wholesalePrice ?? 0,
-                    stock: p.stock ?? 0,
-                    ageFromMonths: p.ageFromMonths ?? 0,
-                    ageToMonths: p.ageToMonths ?? 0,
-                    color: p.color ?? "Multicolor",
-                    isNew: !!p.isNew,
-                    isBestSeller: !!p.isBestSeller,
-                    isOnSale: !!p.isOnSale,
-                    salePercent: p.salePercent ?? 0,
-                    isActive: p.isActive ?? true,
-                  });
-                  setIsAddOpen(true);
+              })();
+            }}
+          >
+            Edit
+          </Button>
+          <Button
+            size="small"
+            color="error"
+            variant="text"
+            disabled={deletingId === row.id}
+            onClick={() => {
+              (async () => {
+                if (!row.id) return;
+                const confirmDelete = window.confirm("Delete this product? This cannot be undone.");
+                if (!confirmDelete) return;
+                setDeletingId(row.id);
+                try {
+                  const res = await fetch(`/api/admin/products/${row.id}`, { method: "DELETE" });
+                  if (!res.ok) {
+                    const json = await res.json().catch(() => ({}));
+                    console.error("Failed to delete product", json?.message);
+                    return;
+                  }
+                  const productsRes = await fetch("/api/admin/products");
+                  const productsJson = await productsRes.json();
+                  setProductRows(productsJson.items ?? []);
+                } catch (e) {
+                  console.error("Failed to delete product", e);
+                } finally {
+                  setDeletingId(null);
                 }
-              } catch (e) {
-                console.error("Failed to load product detail", e);
-              }
-            })();
-          }}
-        >
-          Edit
-        </Button>
+              })();
+            }}
+          >
+            Delete
+          </Button>
+        </Stack>
       ),
       sortable: false,
-      width: 90,
+      width: 140,
     },
     { field: "name", headerName: "Name", flex: 1.4, minWidth: 180 },
     { field: "type", headerName: "Type", flex: 0.9, minWidth: 120 },
