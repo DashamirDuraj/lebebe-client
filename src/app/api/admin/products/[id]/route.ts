@@ -50,14 +50,30 @@ export async function PATCH(request: Request, { params }: Params) {
       isOnSale: body.isOnSale,
       salePercent: body.salePercent,
       isActive: body.isActive,
-      variant: body.variant
-        ? {
-            retailPrice: body.variant.retailPrice,
-            wholesalePrice: body.variant.wholesalePrice,
-            stock: body.variant.stock,
-            size: body.variant.size,
-            color: body.variant.color,
-          }
+      inventoryBatchId: body.inventoryBatchId ?? null,
+      variants: Array.isArray(body.variants)
+        ? body.variants.map((variant: any) => ({
+            id: variant.id,
+            sizeFromMonths: Number(variant.sizeFromMonths ?? 0),
+            sizeToMonths: Number(variant.sizeToMonths ?? 0),
+            color: variant.color ?? "Multicolor",
+            retailPrice: Number(variant.retailPrice ?? 0),
+            wholesalePrice: variant.wholesalePrice != null ? Number(variant.wholesalePrice) : null,
+            stock: Number(variant.stock ?? 0),
+            addStock: Number(variant.addStock ?? 0),
+          }))
+        : undefined,
+      advertisingSpend:
+        body.advertisingSpend != null && body.advertisingSpend !== ""
+          ? Number(body.advertisingSpend)
+          : null,
+      media: Array.isArray(body.media)
+        ? body.media.map((m: any) => ({
+            url: m.url,
+            type: m.type,
+            altText: m.altText,
+            isThumbnail: m.isThumbnail,
+          }))
         : undefined,
     });
     return NextResponse.json({ product: updated });

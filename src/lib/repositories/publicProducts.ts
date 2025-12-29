@@ -227,11 +227,25 @@ function mapToPublicDetail(product: Prisma.ProductGetPayload<{ select: typeof pu
 }
 
 export async function getPublicProducts(params: ProductListParams) {
-  const tags = params.tags?.length
-    ? params.tags
-    : params.tag
-      ? [params.tag]
-      : [];
+  const rawTags = params.tags?.length ? params.tags : params.tag ? [params.tag] : [];
+  const tags = rawTags
+    .map((tag) => {
+      const trimmed = tag.trim();
+      if (!trimmed) return "";
+      const camel = trimmed.replace(/([a-z])([A-Z])/g, "$1-$2");
+      const normalized = camel.toLowerCase().replace(/[_\s]+/g, "-");
+      if (["best-seller", "bestseller", "best-sellers"].includes(normalized)) {
+        return "best-seller";
+      }
+      if (["new-arrival", "new-arrivals", "new"].includes(normalized)) {
+        return "new";
+      }
+      if (["on-sale", "sale", "discount"].includes(normalized)) {
+        return "sale";
+      }
+      return normalized;
+    })
+    .filter(Boolean);
   const page = params.page && params.page > 0 ? params.page : 1;
   const pageSize = params.pageSize && params.pageSize > 0 ? params.pageSize : 12;
   const skip = (page - 1) * pageSize;
@@ -259,9 +273,13 @@ export async function getPublicProducts(params: ProductListParams) {
         }
       : {}),
     ...(params.gender
-      ? {
-          gender: params.gender as any,
-        }
+      ? (() => {
+          const normalizedGender = params.gender.trim().toUpperCase();
+          const allowed = new Set(["GIRL", "BOY", "NEWBORN", "UNISEX"]);
+          return allowed.has(normalizedGender)
+            ? { gender: normalizedGender as any }
+            : {};
+        })()
       : {}),
     ...(tagFilters.length ? { OR: tagFilters } : {}),
   };

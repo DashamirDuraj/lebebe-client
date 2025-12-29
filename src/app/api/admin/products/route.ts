@@ -9,11 +9,14 @@ export async function GET() {
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const required = ["name", "slug", "type", "gender", "variant"];
+    const required = ["name", "slug", "gender", "variants"];
     for (const field of required) {
       if (!body?.[field]) {
         return NextResponse.json({ message: `${field} is required` }, { status: 400 });
       }
+    }
+    if (!Array.isArray(body.variants) || body.variants.length === 0) {
+      return NextResponse.json({ message: "variants is required" }, { status: 400 });
     }
 
     const product = await createAdminProduct({
@@ -24,21 +27,30 @@ export async function POST(request: Request) {
       productTypeId: body.productTypeId,
       description: body.description,
       shortDescription: body.shortDescription,
-      ageFromMonths: body.ageFromMonths ?? null,
-      ageToMonths: body.ageToMonths ?? null,
       isNew: body.isNew,
       isBestSeller: body.isBestSeller,
       isOnSale: body.isOnSale,
       salePercent: body.salePercent,
       isActive: body.isActive,
       categoryId: body.categoryId,
-      variant: {
-        size: body.variant.size ?? "One Size",
-        color: body.variant.color ?? "Multicolor",
-        retailPrice: Number(body.variant.retailPrice ?? 0),
-        wholesalePrice: body.variant.wholesalePrice ? Number(body.variant.wholesalePrice) : null,
-        stock: body.variant.stock ?? 0,
-      },
+      inventoryBatchId: body.inventoryBatchId ?? null,
+      variants: body.variants.map((variant: any) => ({
+        id: variant.id,
+        sizeFromMonths: Number(variant.sizeFromMonths ?? 0),
+        sizeToMonths: Number(variant.sizeToMonths ?? 0),
+        color: variant.color ?? "Multicolor",
+        retailPrice: Number(variant.retailPrice ?? 0),
+        wholesalePrice: variant.wholesalePrice != null ? Number(variant.wholesalePrice) : null,
+        stock: Number(variant.stock ?? 0),
+      })),
+      media: Array.isArray(body.media)
+        ? body.media.map((m: any) => ({
+            url: m.url,
+            type: m.type,
+            altText: m.altText,
+            isThumbnail: m.isThumbnail,
+          }))
+        : undefined,
     });
 
     return NextResponse.json({ product }, { status: 201 });

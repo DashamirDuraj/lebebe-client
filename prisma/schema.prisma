@@ -56,6 +56,7 @@ model Product {
   variants   ProductVariant[]
   media      ProductMedia[]
   orderItems OrderItem[]
+  expenses   ShopExpense[]
 }
 
 model ProductType {
@@ -124,6 +125,17 @@ enum Gender {
 // INVENTORY MOVEMENTS
 // ============================
 
+model InventoryBatch {
+  id         String   @id @default(cuid())
+  title      String
+  receivedAt DateTime
+  createdAt  DateTime @default(now())
+
+  movements InventoryMovement[]
+
+  @@index([receivedAt])
+}
+
 model InventoryMovement {
   id        String         @id @default(cuid())
   variantId String
@@ -137,6 +149,9 @@ model InventoryMovement {
   currency String?  @default("EUR")
 
   note String?
+
+  inventoryBatchId String?
+  inventoryBatch   InventoryBatch? @relation(fields: [inventoryBatchId], references: [id])
 
   // Optional link to order if movement was caused by a sale
   orderId String?
@@ -277,11 +292,16 @@ model ShopExpense {
   amount      Decimal         @db.Decimal(10, 2)
   currency    String          @default("EUR")
 
+  productId String?
+  product   Product? @relation(fields: [productId], references: [id])
+
   quantity Int? // e.g. 500 bags, 100 cards
   unit     String? // "bags", "cards", "flyers"
 
   date      DateTime @default(now())
   createdAt DateTime @default(now())
+
+  @@index([productId])
 }
 
 enum ExpenseCategory {

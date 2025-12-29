@@ -1,4 +1,10 @@
-import { DeliveryStatus, OrderStatus, Prisma } from "@prisma/client";
+import {
+  DeliveryStatus,
+  ExpenseCategory,
+  InventoryMovementType,
+  OrderStatus,
+  Prisma,
+} from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 
 const toNumber = (value: Prisma.Decimal | number | null | undefined) =>
@@ -114,6 +120,411 @@ export async function getAdminOrdersTable() {
   }));
 }
 
+export async function getAdminOrderProductOptions() {
+  const variants = await prisma.productVariant.findMany({
+    include: { product: true },
+    orderBy: { createdAt: "desc" },
+  });
+
+  return variants.map((variant) => ({
+    variantId: variant.id,
+    productId: variant.productId,
+    productName: variant.product?.name ?? "Product",
+    size: variant.size,
+    color: variant.color,
+    price: toNumber(variant.retailPrice),
+  }));
+}
+
+type AdminOrderInput = {
+  firstName: string;
+  lastName: string;
+  email?: string | null;
+  phone: string;
+  address: string;
+  city: string;
+  postalCode?: string | null;
+  notes?: string | null;
+  paymentType: Prisma.PaymentType;
+  source: Prisma.OrderSource;
+  status: Prisma.OrderStatus;
+  deliveryStatus: Prisma.DeliveryStatus;
+  items: {
+    variantId: string;
+    quantity: number;
+  }[];
+};
+
+export async function createAdminOrder(data: AdminOrderInput) {
+  if (!data.items?.length) {
+    throw new Error("At least one item is required");
+  }
+
+  const existingCustomer = await prisma.customer.findFirst({
+    where: { phone: data.phone },
+  });
+
+  const normalizedItems = data.items.reduce<Record<string, number>>((acc, item) => {
+    if (!item.variantId) return acc;
+    const quantity = Number(item.quantity ?? 0);
+    if (quantity <= 0) return acc;
+    acc[item.variantId] = (acc[item.variantId] ?? 0) + quantity;
+    return acc;
+  }, {});
+
+  const variantIds = Object.keys(normalizedItems);
+  if (variantIds.length === 0) {
+    throw new Error("At least one valid item is required");
+  }
+
+  const variants = await prisma.productVariant.findMany({
+    where: { id: { in: variantIds } },
+    include: { product: true },
+  });
+
+  if (variants.length !== variantIds.length) {
+    throw new Error("One or more variants are invalid");
+  }
+
+  const orderItems = variants.map((variant) => ({
+    productId: variant.productId,
+    variantId: variant.id,
+    quantity: normalizedItems[variant.id],
+    unitPrice: variant.retailPrice,
+  }));
+
+  const totalAmount = orderItems.reduce((sum, item) => {
+    return sum + Number(item.unitPrice) * item.quantity;
+  }, 0);
+
+  const customerConnect = existingCustomer
+    ? { connect: { id: existingCustomer.id } }
+    : data.email && data.email.trim().length > 0
+      ? {
+          connectOrCreate: {
+            where: { email: data.email },
+            create: {
+              email: data.email,
+              firstName: data.firstName,
+              lastName: data.lastName,
+              phone: data.phone,
+            },
+          },
+        }
+      : undefined;
+
+  return prisma.$transaction(async (tx) => {
+    if (data.status === "CONFIRMED") {
+      for (const variant of variants) {
+        const qty = normalizedItems[variant.id];
+        if (variant.stock < qty) {
+          throw new Error(`Insufficient stock for ${variant.product?.name ?? "variant"}`);
+        }
+      }
+    }
+
+    const order = await tx.order.create({
+      data: {
+        firstName: data.firstName,
+        lastName: data.lastName,
+        email: data.email ?? null,
+        phone: data.phone,
+        address: data.address,
+        city: data.city,
+        postalCode: data.postalCode ?? null,
+        notes: data.notes ?? null,
+        paymentType: data.paymentType,
+        source: data.source,
+        status: data.status,
+        deliveryStatus: data.deliveryStatus,
+        totalAmount: new Prisma.Decimal(totalAmount),
+        currency: "ALL",
+        otpHash: null,
+        otpExpiresAt: null,
+        otpAttempts: 0,
+        ...(customerConnect ? { customer: customerConnect } : {}),
+        items: {
+          create: orderItems.map((item) => ({
+            productId: item.productId,
+            variantId: item.variantId,
+            quantity: item.quantity,
+            unitPrice: item.unitPrice,
+          })),
+        },
+      },
+    });
+
+    if (data.status === "CONFIRMED") {
+      for (const item of orderItems) {
+        await tx.productVariant.update({
+          where: { id: item.variantId },
+          data: { stock: { decrement: item.quantity } },
+        });
+        await tx.inventoryMovement.create({
+          data: {
+            variantId: item.variantId,
+            movementType: InventoryMovementType.REMOVE,
+            quantity: item.quantity,
+            unitCost: null,
+            currency: "ALL",
+            orderId: order.id,
+            note: "Manual order",
+          },
+        });
+      }
+    }
+
+    return order;
+  });
+}
+
+export async function getAdminOrderDetail(id: string) {
+  const order = await prisma.order.findUnique({
+    where: { id },
+    include: { items: true },
+  });
+
+  if (!order) return null;
+
+  return {
+    id: order.id,
+    firstName: order.firstName,
+    lastName: order.lastName,
+    email: order.email ?? "",
+    phone: order.phone,
+    address: order.address,
+    city: order.city,
+    postalCode: order.postalCode ?? "",
+    notes: order.notes ?? "",
+    totalAmount: toNumber(order.totalAmount),
+    paymentType: order.paymentType,
+    source: order.source,
+    status: order.status,
+    deliveryStatus: order.deliveryStatus,
+    items: order.items.map((item) => ({
+      variantId: item.variantId ?? "",
+      quantity: item.quantity,
+    })),
+  };
+}
+
+export async function updateAdminOrder(id: string, data: AdminOrderInput) {
+  if (!data.items?.length) {
+    throw new Error("At least one item is required");
+  }
+
+  const normalizedItems = data.items.reduce<Record<string, number>>((acc, item) => {
+    if (!item.variantId) return acc;
+    const quantity = Number(item.quantity ?? 0);
+    if (quantity <= 0) return acc;
+    acc[item.variantId] = (acc[item.variantId] ?? 0) + quantity;
+    return acc;
+  }, {});
+
+  const variantIds = Object.keys(normalizedItems);
+  if (variantIds.length === 0) {
+    throw new Error("At least one valid item is required");
+  }
+
+  const variants = await prisma.productVariant.findMany({
+    where: { id: { in: variantIds } },
+    include: { product: true },
+  });
+
+  if (variants.length !== variantIds.length) {
+    throw new Error("One or more variants are invalid");
+  }
+
+  const orderItems = variants.map((variant) => ({
+    productId: variant.productId,
+    variantId: variant.id,
+    quantity: normalizedItems[variant.id],
+    unitPrice: variant.retailPrice,
+  }));
+
+  const totalAmount = orderItems.reduce((sum, item) => {
+    return sum + Number(item.unitPrice) * item.quantity;
+  }, 0);
+
+  const customerConnect =
+    data.email && data.email.trim().length > 0
+      ? {
+          connectOrCreate: {
+            where: { email: data.email },
+            create: {
+              email: data.email,
+              firstName: data.firstName,
+              lastName: data.lastName,
+              phone: data.phone,
+            },
+          },
+        }
+      : undefined;
+
+  return prisma.$transaction(async (tx) => {
+    const existing = await tx.order.findUnique({
+      where: { id },
+      include: { items: true },
+    });
+
+    if (!existing) {
+      throw new Error("Order not found");
+    }
+
+    const oldConfirmed = existing.status === "CONFIRMED";
+    const newConfirmed = data.status === "CONFIRMED";
+
+    const oldMap = existing.items.reduce<Record<string, number>>((acc, item) => {
+      if (!item.variantId) return acc;
+      acc[item.variantId] = (acc[item.variantId] ?? 0) + item.quantity;
+      return acc;
+    }, {});
+
+    if (newConfirmed) {
+      for (const variant of variants) {
+        const oldQty = oldConfirmed ? oldMap[variant.id] ?? 0 : 0;
+        const newQty = normalizedItems[variant.id] ?? 0;
+        const diff = newQty - oldQty;
+        if (diff > 0 && variant.stock < diff) {
+          throw new Error(`Insufficient stock for ${variant.product?.name ?? "variant"}`);
+        }
+      }
+    }
+
+    await tx.orderItem.deleteMany({ where: { orderId: id } });
+    await tx.orderItem.createMany({
+      data: orderItems.map((item) => ({
+        orderId: id,
+        productId: item.productId,
+        variantId: item.variantId,
+        quantity: item.quantity,
+        unitPrice: item.unitPrice,
+      })),
+    });
+
+    if (oldConfirmed && !newConfirmed) {
+      for (const [variantId, qty] of Object.entries(oldMap)) {
+        await tx.productVariant.update({
+          where: { id: variantId },
+          data: { stock: { increment: qty } },
+        });
+        await tx.inventoryMovement.create({
+          data: {
+            variantId,
+            movementType: InventoryMovementType.ADD,
+            quantity: qty,
+            unitCost: null,
+            currency: "ALL",
+            orderId: id,
+            note: "Order reverted",
+          },
+        });
+      }
+    } else if (!oldConfirmed && newConfirmed) {
+      for (const item of orderItems) {
+        await tx.productVariant.update({
+          where: { id: item.variantId },
+          data: { stock: { decrement: item.quantity } },
+        });
+        await tx.inventoryMovement.create({
+          data: {
+            variantId: item.variantId,
+            movementType: InventoryMovementType.REMOVE,
+            quantity: item.quantity,
+            unitCost: null,
+            currency: "ALL",
+            orderId: id,
+            note: "Order confirmed",
+          },
+        });
+      }
+    } else if (oldConfirmed && newConfirmed) {
+      const allVariantIds = new Set([...Object.keys(oldMap), ...variantIds]);
+      for (const variantId of allVariantIds) {
+        const oldQty = oldMap[variantId] ?? 0;
+        const newQty = normalizedItems[variantId] ?? 0;
+        const diff = newQty - oldQty;
+        if (diff === 0) continue;
+        await tx.productVariant.update({
+          where: { id: variantId },
+          data: diff > 0 ? { stock: { decrement: diff } } : { stock: { increment: -diff } },
+        });
+        await tx.inventoryMovement.create({
+          data: {
+            variantId,
+            movementType: diff > 0 ? InventoryMovementType.REMOVE : InventoryMovementType.ADD,
+            quantity: Math.abs(diff),
+            unitCost: null,
+            currency: "ALL",
+            orderId: id,
+            note: "Order updated",
+          },
+        });
+      }
+    }
+
+    return tx.order.update({
+      where: { id },
+      data: {
+        firstName: data.firstName,
+        lastName: data.lastName,
+        email: data.email ?? null,
+        phone: data.phone,
+        address: data.address,
+        city: data.city,
+        postalCode: data.postalCode ?? null,
+        notes: data.notes ?? null,
+        paymentType: data.paymentType,
+        source: data.source,
+        status: data.status,
+        deliveryStatus: data.deliveryStatus,
+        totalAmount: new Prisma.Decimal(totalAmount),
+        currency: "ALL",
+        ...(customerConnect ? { customer: customerConnect } : {}),
+      },
+    });
+  });
+}
+
+export async function deleteAdminOrder(id: string) {
+  return prisma.$transaction(async (tx) => {
+    const order = await tx.order.findUnique({
+      where: { id },
+      include: { items: true },
+    });
+
+    if (!order) {
+      throw new Error("Order not found");
+    }
+
+    if (order.status === "CONFIRMED") {
+      for (const item of order.items) {
+        if (!item.variantId) continue;
+        await tx.productVariant.update({
+          where: { id: item.variantId },
+          data: { stock: { increment: item.quantity } },
+        });
+        await tx.inventoryMovement.create({
+          data: {
+            variantId: item.variantId,
+            movementType: InventoryMovementType.ADD,
+            quantity: item.quantity,
+            unitCost: null,
+            currency: "ALL",
+            note: "Order deleted",
+          },
+        });
+      }
+    }
+
+    await tx.inventoryMovement.deleteMany({ where: { orderId: id } });
+    await tx.orderItem.deleteMany({ where: { orderId: id } });
+    await tx.order.delete({ where: { id } });
+
+    return { success: true };
+  });
+}
+
 export async function getAdminClientsTable() {
   const customers = await prisma.customer.findMany({
     include: {
@@ -164,21 +575,28 @@ type CreateProductInput = {
   gender: "GIRL" | "BOY" | "NEWBORN" | "UNISEX";
   description?: string;
   shortDescription?: string;
-  ageFromMonths?: number | null;
-  ageToMonths?: number | null;
   isNew?: boolean;
   isBestSeller?: boolean;
   isOnSale?: boolean;
   salePercent?: number | null;
   isActive?: boolean;
   categoryId?: string | null;
-  variant: {
-    size: string;
+  inventoryBatchId?: string | null;
+  variants: {
+    id?: string;
+    sizeFromMonths: number;
+    sizeToMonths: number;
     color: string;
     retailPrice: number;
     wholesalePrice?: number | null;
     stock?: number;
-  };
+  }[];
+  media?: {
+    url: string;
+    type: "IMAGE" | "VIDEO";
+    altText?: string | null;
+    isThumbnail?: boolean;
+  }[];
 };
 
 export async function createAdminProduct(data: CreateProductInput) {
@@ -191,38 +609,91 @@ export async function createAdminProduct(data: CreateProductInput) {
     typeName = productType?.name || "General";
   }
 
-  const product = await prisma.product.create({
-    data: {
-      name: data.name,
-      slug: data.slug,
-      type: typeName ?? "General",
-      productTypeId: data.productTypeId ?? null,
-      gender: data.gender,
-      description: data.description ?? null,
-      shortDescription: data.shortDescription ?? null,
-      ageFromMonths: data.ageFromMonths ?? null,
-      ageToMonths: data.ageToMonths ?? null,
-      isNew: data.isNew ?? false,
-      isBestSeller: data.isBestSeller ?? false,
-      isOnSale: data.isOnSale ?? false,
-      salePercent: data.salePercent ?? null,
-      isActive: data.isActive ?? true,
-      categoryId: data.categoryId ?? null,
-      variants: {
-        create: {
-          size: data.variant.size,
-          color: data.variant.color,
-          retailPrice: new Prisma.Decimal(data.variant.retailPrice),
-          wholesalePrice: data.variant.wholesalePrice
-            ? new Prisma.Decimal(data.variant.wholesalePrice)
-            : null,
-          stock: data.variant.stock ?? 0,
+  if (!data.variants || data.variants.length === 0) {
+    throw new Error("At least one variant is required");
+  }
+
+  const hasStock = data.variants.some((variant) => (variant.stock ?? 0) > 0);
+  if (hasStock && !data.inventoryBatchId) {
+    throw new Error("Inventory batch is required when stock is provided");
+  }
+
+  const normalizedVariants = data.variants.map((variant) => ({
+    size: `${variant.sizeFromMonths}-${variant.sizeToMonths}M`,
+    color: variant.color,
+    retailPrice: new Prisma.Decimal(variant.retailPrice),
+    wholesalePrice:
+      variant.wholesalePrice != null ? new Prisma.Decimal(variant.wholesalePrice) : null,
+    stock: variant.stock ?? 0,
+  }));
+
+  const ageFromMonths = Math.min(...data.variants.map((v) => v.sizeFromMonths));
+  const ageToMonths = Math.max(...data.variants.map((v) => v.sizeToMonths));
+
+  const product = await prisma.$transaction(async (tx) => {
+    const created = await tx.product.create({
+      data: {
+        name: data.name,
+        slug: data.slug,
+        type: typeName ?? "General",
+        productTypeId: data.productTypeId ?? null,
+        gender: data.gender,
+        description: data.description ?? null,
+        shortDescription: data.shortDescription ?? null,
+        ageFromMonths,
+        ageToMonths,
+        isNew: data.isNew ?? false,
+        isBestSeller: data.isBestSeller ?? false,
+        isOnSale: data.isOnSale ?? false,
+        salePercent: data.salePercent ?? null,
+        isActive: data.isActive ?? true,
+        categoryId: data.categoryId ?? null,
+        variants: {
+          create: normalizedVariants,
         },
+        media: data.media
+          ? {
+              create: (() => {
+                const media = [...data.media];
+                const thumbnailIdx = media.findIndex((m) => m.isThumbnail);
+                if (thumbnailIdx > -1) {
+                  const [thumb] = media.splice(thumbnailIdx, 1);
+                  media.unshift(thumb);
+                }
+                return media.map((m, index) => ({
+                  url: m.url,
+                  type: m.type,
+                  position: index,
+                  altText: m.altText ?? null,
+                }));
+              })(),
+            }
+          : undefined,
       },
-    },
-    include: {
-      variants: true,
-    },
+      include: {
+        variants: true,
+      },
+    });
+
+    if (data.inventoryBatchId) {
+      for (const variant of created.variants) {
+        if ((variant.stock ?? 0) > 0) {
+          await tx.inventoryMovement.create({
+            data: {
+              variantId: variant.id,
+              movementType: InventoryMovementType.ADD,
+              quantity: variant.stock ?? 0,
+              unitCost: null,
+              currency: "ALL",
+              inventoryBatchId: data.inventoryBatchId,
+              note: "Initial stock",
+            },
+          });
+        }
+      }
+    }
+
+    return created;
   });
 
   return product;
@@ -249,6 +720,32 @@ export async function deleteAdminProductType(id: string) {
   });
 }
 
+export async function getAdminInventoryBatches() {
+  const batches = await prisma.inventoryBatch.findMany({
+    orderBy: { receivedAt: "desc" },
+  });
+
+  return batches.map((batch) => ({
+    id: batch.id,
+    title: batch.title,
+    receivedAt: batch.receivedAt.toISOString().split("T")[0],
+  }));
+}
+
+export async function createAdminInventoryBatch(title: string, receivedAt: string) {
+  const date = new Date(receivedAt);
+  if (Number.isNaN(date.getTime())) {
+    throw new Error("Invalid received date");
+  }
+
+  return prisma.inventoryBatch.create({
+    data: {
+      title,
+      receivedAt: date,
+    },
+  });
+}
+
 export async function updateAdminProductBasics(
   id: string,
   data: {
@@ -261,13 +758,24 @@ export async function updateAdminProductBasics(
     isOnSale?: boolean;
     salePercent?: number | null;
     isActive?: boolean;
-    variant?: {
-      retailPrice?: number | null;
+    inventoryBatchId?: string | null;
+    variants?: {
+      id?: string;
+      sizeFromMonths: number;
+      sizeToMonths: number;
+      color: string;
+      retailPrice: number;
       wholesalePrice?: number | null;
-      stock?: number | null;
-      size?: string | null;
-      color?: string | null;
-    };
+      stock?: number;
+      addStock?: number;
+    }[];
+    advertisingSpend?: number | null;
+    media?: {
+      url: string;
+      type: "IMAGE" | "VIDEO";
+      altText?: string | null;
+      isThumbnail?: boolean;
+    }[];
   },
 ) {
   let typeName = data.type;
@@ -280,6 +788,15 @@ export async function updateAdminProductBasics(
   }
 
   const updated = await prisma.$transaction(async (tx) => {
+    const ageFromMonths =
+      data.variants && data.variants.length > 0
+        ? Math.min(...data.variants.map((v) => v.sizeFromMonths))
+        : undefined;
+    const ageToMonths =
+      data.variants && data.variants.length > 0
+        ? Math.max(...data.variants.map((v) => v.sizeToMonths))
+        : undefined;
+
     const product = await tx.product.update({
       where: { id },
       data: {
@@ -292,47 +809,129 @@ export async function updateAdminProductBasics(
         isOnSale: data.isOnSale,
         salePercent: data.salePercent ?? null,
         isActive: data.isActive,
+        ageFromMonths,
+        ageToMonths,
       },
     });
 
-    if (data.variant) {
-      const existingVariant = await tx.productVariant.findFirst({
+    if (data.variants) {
+      const existingVariants = await tx.productVariant.findMany({
         where: { productId: id },
-        orderBy: { createdAt: "asc" },
       });
+      const incomingIds = new Set(data.variants.map((v) => v.id).filter(Boolean));
 
-      if (existingVariant) {
-        await tx.productVariant.update({
-          where: { id: existingVariant.id },
-          data: {
-            retailPrice:
-              data.variant.retailPrice != null
-                ? new Prisma.Decimal(data.variant.retailPrice)
-                : undefined,
-            wholesalePrice:
-              data.variant.wholesalePrice != null
-                ? new Prisma.Decimal(data.variant.wholesalePrice)
-                : undefined,
-            stock: data.variant.stock ?? undefined,
-            size: data.variant.size ?? undefined,
-            color: data.variant.color ?? undefined,
-          },
-        });
-      } else {
-        await tx.productVariant.create({
-          data: {
+      for (const variant of data.variants) {
+        const size = `${variant.sizeFromMonths}-${variant.sizeToMonths}M`;
+        if (variant.id) {
+          const addStock = variant.addStock ?? 0;
+          if (addStock > 0 && !data.inventoryBatchId) {
+            throw new Error("Inventory batch is required for new stock");
+          }
+
+          await tx.productVariant.update({
+            where: { id: variant.id },
+            data: {
+              size,
+              color: variant.color,
+              retailPrice: new Prisma.Decimal(variant.retailPrice),
+              wholesalePrice:
+                variant.wholesalePrice != null
+                  ? new Prisma.Decimal(variant.wholesalePrice)
+                  : null,
+              stock: addStock > 0 ? { increment: addStock } : undefined,
+            },
+          });
+
+          if (addStock > 0 && data.inventoryBatchId) {
+            await tx.inventoryMovement.create({
+              data: {
+                variantId: variant.id,
+                movementType: InventoryMovementType.ADD,
+                quantity: addStock,
+                unitCost: null,
+                currency: "ALL",
+                inventoryBatchId: data.inventoryBatchId,
+                note: "Manual stock add",
+              },
+            });
+          }
+        } else {
+          if (!data.inventoryBatchId && (variant.stock ?? 0) > 0) {
+            throw new Error("Inventory batch is required for new stock");
+          }
+          const createdVariant = await tx.productVariant.create({
+            data: {
+              productId: id,
+              size,
+              color: variant.color,
+              retailPrice: new Prisma.Decimal(variant.retailPrice),
+              wholesalePrice:
+                variant.wholesalePrice != null
+                  ? new Prisma.Decimal(variant.wholesalePrice)
+                  : null,
+              stock: variant.stock ?? 0,
+            },
+          });
+
+          if (data.inventoryBatchId && (variant.stock ?? 0) > 0) {
+            await tx.inventoryMovement.create({
+              data: {
+                variantId: createdVariant.id,
+                movementType: InventoryMovementType.ADD,
+                quantity: variant.stock ?? 0,
+                unitCost: null,
+                currency: "ALL",
+                inventoryBatchId: data.inventoryBatchId,
+                note: "New variant stock",
+              },
+            });
+          }
+        }
+      }
+
+      const toDelete = existingVariants.filter((v) => !incomingIds.has(v.id));
+      for (const variant of toDelete) {
+        const orderItems = await tx.orderItem.count({ where: { variantId: variant.id } });
+        if (orderItems > 0) {
+          throw new Error("Cannot delete a variant that has existing orders");
+        }
+        await tx.inventoryMovement.deleteMany({ where: { variantId: variant.id } });
+        await tx.productVariant.delete({ where: { id: variant.id } });
+      }
+    }
+
+    if (data.media) {
+      const media = [...data.media];
+      const thumbnailIdx = media.findIndex((m) => m.isThumbnail);
+      if (thumbnailIdx > -1) {
+        const [thumb] = media.splice(thumbnailIdx, 1);
+        media.unshift(thumb);
+      }
+
+      await tx.productMedia.deleteMany({ where: { productId: id } });
+      if (media.length > 0) {
+        await tx.productMedia.createMany({
+          data: media.map((m, index) => ({
             productId: id,
-            size: data.variant.size ?? "One Size",
-            color: data.variant.color ?? "Multicolor",
-            retailPrice: new Prisma.Decimal(data.variant.retailPrice ?? 0),
-            wholesalePrice:
-              data.variant.wholesalePrice != null
-                ? new Prisma.Decimal(data.variant.wholesalePrice)
-                : null,
-            stock: data.variant.stock ?? 0,
-          },
+            url: m.url,
+            type: m.type,
+            position: index,
+            altText: m.altText ?? null,
+          })),
         });
       }
+    }
+
+    if (data.advertisingSpend && data.advertisingSpend > 0) {
+      await tx.shopExpense.create({
+        data: {
+          category: ExpenseCategory.ADS,
+          amount: new Prisma.Decimal(data.advertisingSpend),
+          currency: "ALL",
+          productId: id,
+          description: `Advertising for ${product.name}`,
+        },
+      });
     }
 
     return tx.product.findUnique({
@@ -393,6 +992,7 @@ export async function deleteAdminProduct(id: string) {
         variant: { productId: id },
       },
     });
+    await tx.shopExpense.deleteMany({ where: { productId: id } });
     await tx.productMedia.deleteMany({ where: { productId: id } });
     await tx.productVariant.deleteMany({ where: { productId: id } });
     await tx.product.delete({ where: { id } });
@@ -411,12 +1011,26 @@ export async function getAdminProductDetail(id: string) {
       variants: {
         orderBy: { createdAt: "asc" },
       },
+      media: {
+        orderBy: { position: "asc" },
+      },
     },
   });
 
   if (!product) return null;
 
-  const variant = product.variants[0];
+  const parseSizeRange = (size: string) => {
+    const match = size.match(/(\d+)\s*-\s*(\d+)/);
+    if (match) {
+      return { from: Number(match[1]), to: Number(match[2]) };
+    }
+    const single = size.match(/(\d+)/);
+    if (single) {
+      const value = Number(single[1]);
+      return { from: value, to: value };
+    }
+    return { from: 0, to: 0 };
+  };
 
   return {
     id: product.id,
@@ -425,16 +1039,28 @@ export async function getAdminProductDetail(id: string) {
     type: product.productType?.name || product.type,
     productTypeId: product.productTypeId ?? "",
     gender: product.gender,
-    retailPrice: variant ? toNumber(variant.retailPrice) : 0,
-    wholesalePrice: variant ? toNumber(variant.wholesalePrice) : 0,
-    stock: variant?.stock ?? 0,
-    ageFromMonths: product.ageFromMonths ?? 0,
-    ageToMonths: product.ageToMonths ?? 0,
-    color: variant?.color ?? "Multicolor",
+    variants: product.variants.map((variant) => {
+      const range = parseSizeRange(variant.size);
+      return {
+        id: variant.id,
+        sizeFromMonths: range.from,
+        sizeToMonths: range.to,
+        color: variant.color,
+        stock: variant.stock ?? 0,
+        retailPrice: toNumber(variant.retailPrice),
+        wholesalePrice: toNumber(variant.wholesalePrice),
+      };
+    }),
     isNew: product.isNew,
     isBestSeller: product.isBestSeller,
     isOnSale: product.isOnSale,
     salePercent: product.salePercent ?? 0,
     isActive: product.isActive,
+    media: product.media.map((m) => ({
+      id: m.id,
+      url: m.url,
+      type: m.type,
+      altText: m.altText ?? "",
+    })),
   };
 }
